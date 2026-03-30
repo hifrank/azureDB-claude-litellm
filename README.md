@@ -22,7 +22,7 @@ LiteLLM wraps the Databricks model serving REST API behind an OpenAI-compatible 
 | Azure subscription | With an Azure Databricks workspace deployed |
 | Python | 3.9+ (3.11+ recommended) |
 | Azure CLI | [Install](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) — needed to create a PAT or VM |
-| Databricks PAT | Personal Access Token for authentication |
+| Service Principal | Azure AD SP for OAuth M2M auth (or PAT for quick testing) |
 
 ---
 
@@ -37,33 +37,54 @@ Note the workspace URL — you'll need it as: `https://<workspace-url>/serving-e
 
 ---
 
-## 2. Generate a Personal Access Token (PAT)
+## 2. Create a Service Principal (OAuth M2M)
 
-**Option A — Databricks UI:**
+OAuth M2M with a Service Principal is the recommended authentication method for production.
 
-1. Open your workspace URL in a browser
-2. Click your username (top-right) → **Settings**
-3. Go to **Developer** → **Access tokens** → **Generate new token**
-4. Set a comment (e.g. `litellm-test`) and lifetime, then copy the token
+### Create the Service Principal
 
-**Option B — Azure CLI + REST API:**
+```bash
+az ad sp create-for-rbac --name "litellm-databricks-sp" --skip-assignment -o json
+```
+
+Note the `appId` (= client ID) and `password` (= client secret) from the output.
+
+### Grant access to the Databricks workspace
 
 ```bash
 WORKSPACE_URL="https://<your-workspace>.azuredatabricks.net"
+SP_APP_ID="<appId from above>"
+RESOURCE_GROUP="<your-resource-group>"
+WORKSPACE_NAME="<your-workspace-name>"
 
-# Get an Azure AD token for the Databricks resource
+# 1. Assign Contributor role on the workspace resource
+az role assignment create \
+  --assignee $SP_APP_ID \
+  --role "Contributor" \
+  --scope $(az databricks workspace show -n $WORKSPACE_NAME -g $RESOURCE_GROUP --query id -o tsv)
+
+# 2. Register the SP in Databricks via SCIM API
 DB_TOKEN=$(az account get-access-token \
   --resource 2ff814a6-3304-4ab8-85cb-cd0e6f879c1d \
   -o tsv --query accessToken)
 
-# Create a PAT valid for 24 hours
-curl -s -X POST "${WORKSPACE_URL}/api/2.0/token/create" \
+curl -s -X POST "${WORKSPACE_URL}/api/2.0/preview/scim/v2/ServicePrincipals" \
   -H "Authorization: Bearer $DB_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"comment": "litellm-test", "lifetime_seconds": 86400}'
+  -d "{
+    \"schemas\": [\"urn:ietf:params:scim:schemas:core:2.0:ServicePrincipal\"],
+    \"applicationId\": \"${SP_APP_ID}\",
+    \"displayName\": \"litellm-databricks-sp\",
+    \"active\": true
+  }"
 ```
 
-The response contains `token_value` — use that as your `DATABRICKS_API_KEY`.
+### (Optional) PAT-based auth
+
+For quick testing, you can use a Personal Access Token instead:
+
+1. Open your workspace URL → **Settings** → **Developer** → **Access tokens** → **Generate new token**
+2. Set `DATABRICKS_API_KEY=dapi...` in `.env` (LiteLLM checks PAT before OAuth)
 
 ---
 
@@ -76,8 +97,11 @@ cp .env.example .env
 Edit `.env` with your values:
 
 ```dotenv
-# Databricks credentials
-DATABRICKS_API_KEY=dapi...your-personal-access-token...
+# Azure AD Service Principal credentials (OAuth M2M via Databricks SDK)
+ARM_CLIENT_ID=<your-service-principal-application-id>
+ARM_CLIENT_SECRET=<your-service-principal-secret>
+ARM_TENANT_ID=<your-azure-ad-tenant-id>
+DATABRICKS_HOST=https://<your-workspace>.azuredatabricks.net
 DATABRICKS_API_BASE=https://<your-workspace>.azuredatabricks.net/serving-endpoints
 
 # LiteLLM proxy settings (set after deploying the proxy VM)
@@ -116,7 +140,7 @@ ssh azureuser@$PUBLIC_IP "cloud-init status --wait"
 ### Install proxy extras
 
 ```bash
-ssh azureuser@$PUBLIC_IP "sudo /opt/litellm-env/bin/pip install 'litellm[proxy]'"
+ssh azureuser@$PUBLIC_IP "sudo /opt/litellm-env/bin/pip install 'litellm[proxy]' databricks-sdk"
 ```
 
 ### Open port 4000 (restricted to your IP)
@@ -150,8 +174,11 @@ az network nsg rule update \
 scp litellm_config.yaml azureuser@$PUBLIC_IP:~/litellm_config.yaml
 
 ssh azureuser@$PUBLIC_IP "nohup env \
-  DATABRICKS_API_KEY=<your-pat> \
+  DATABRICKS_HOST=https://<your-workspace>.azuredatabricks.net \
   DATABRICKS_API_BASE=https://<your-workspace>.azuredatabricks.net/serving-endpoints \
+  ARM_CLIENT_ID=<your-service-principal-application-id> \
+  ARM_CLIENT_SECRET=<your-service-principal-secret> \
+  ARM_TENANT_ID=<your-azure-ad-tenant-id> \
   LITELLM_MASTER_KEY=<your-proxy-master-key> \
   /opt/litellm-env/bin/litellm --config ~/litellm_config.yaml --host 0.0.0.0 --port 4000 \
   > ~/litellm_proxy.log 2>&1 &"
@@ -244,35 +271,43 @@ response = completion(model="databricks/<model-name>", messages=[...])
 
 ## Authentication Methods
 
-LiteLLM supports three authentication methods for Databricks, in order of preference:
+LiteLLM supports multiple authentication methods for Databricks:
 
-### 1. OAuth M2M (recommended for production)
+### 1. Azure AD Service Principal via Databricks SDK (recommended for production)
 
-```python
-import os
-os.environ["DATABRICKS_CLIENT_ID"] = "your-service-principal-app-id"
-os.environ["DATABRICKS_CLIENT_SECRET"] = "your-service-principal-secret"
-os.environ["DATABRICKS_API_BASE"] = "https://<workspace>.azuredatabricks.net/serving-endpoints"
+This project uses the Databricks SDK with Azure AD Service Principal credentials.
+When no `api_key` is set in the config, LiteLLM falls back to the Databricks SDK,
+which auto-authenticates using Azure Identity.
+
+```bash
+pip install databricks-sdk
 ```
 
-### 2. Personal Access Token (used in this project)
+```bash
+export ARM_CLIENT_ID="your-service-principal-app-id"
+export ARM_CLIENT_SECRET="your-service-principal-secret"
+export ARM_TENANT_ID="your-azure-ad-tenant-id"
+export DATABRICKS_HOST="https://<workspace>.azuredatabricks.net"
+export DATABRICKS_API_BASE="https://<workspace>.azuredatabricks.net/serving-endpoints"
+```
 
-```python
-import os
-os.environ["DATABRICKS_API_KEY"] = "dapi..."
-os.environ["DATABRICKS_API_BASE"] = "https://<workspace>.azuredatabricks.net/serving-endpoints"
+> **Note:** LiteLLM also has a built-in M2M path using `DATABRICKS_CLIENT_ID` /
+> `DATABRICKS_CLIENT_SECRET`, but that uses the Databricks workspace OIDC endpoint
+> (`/oidc/v1/token`) which does **not** accept Azure AD SP credentials. For Azure
+> Databricks, you must use the Databricks SDK path with `ARM_*` env vars.
+
+### 2. Personal Access Token
+
+```bash
+export DATABRICKS_API_KEY="dapi..."
+export DATABRICKS_API_BASE="https://<workspace>.azuredatabricks.net/serving-endpoints"
 ```
 
 ### 3. Databricks SDK auto-auth
 
 ```bash
 pip install databricks-sdk
-```
-
-```python
-# No env vars needed — uses unified auth from Databricks SDK
-from litellm import completion
-response = completion(model="databricks/databricks-claude-sonnet-4-6", messages=[...])
+# Uses unified auth (az login, env vars, etc.) — see Databricks docs
 ```
 
 ---

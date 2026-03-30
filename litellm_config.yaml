@@ -1,52 +1,49 @@
+# OAuth M2M auth (Azure AD Service Principal via Databricks SDK):
+# Set ARM_CLIENT_ID, ARM_CLIENT_SECRET, ARM_TENANT_ID, and DATABRICKS_HOST
+# in the environment. When no api_key is set, LiteLLM falls back to the
+# Databricks SDK which auto-authenticates via Azure Identity.
+
 model_list:
   # --- Chat Models ---
   - model_name: databricks-claude-sonnet-4-6
     litellm_params:
       model: databricks/databricks-claude-sonnet-4-6
-      api_key: os.environ/DATABRICKS_API_KEY
       api_base: os.environ/DATABRICKS_API_BASE
 
   - model_name: databricks-claude-sonnet-4-5
     litellm_params:
       model: databricks/databricks-claude-sonnet-4-5
-      api_key: os.environ/DATABRICKS_API_KEY
       api_base: os.environ/DATABRICKS_API_BASE
 
   - model_name: databricks-claude-haiku-4-5
     litellm_params:
       model: databricks/databricks-claude-haiku-4-5
-      api_key: os.environ/DATABRICKS_API_KEY
       api_base: os.environ/DATABRICKS_API_BASE
 
   - model_name: databricks-claude-opus-4-6
     litellm_params:
       model: databricks/databricks-claude-opus-4-6
-      api_key: os.environ/DATABRICKS_API_KEY
       api_base: os.environ/DATABRICKS_API_BASE
 
   - model_name: databricks-meta-llama-3-3-70b-instruct
     litellm_params:
       model: databricks/databricks-meta-llama-3-3-70b-instruct
-      api_key: os.environ/DATABRICKS_API_KEY
       api_base: os.environ/DATABRICKS_API_BASE
 
   - model_name: databricks-meta-llama-3-1-8b-instruct
     litellm_params:
       model: databricks/databricks-meta-llama-3-1-8b-instruct
-      api_key: os.environ/DATABRICKS_API_KEY
       api_base: os.environ/DATABRICKS_API_BASE
 
   - model_name: databricks-llama-4-maverick
     litellm_params:
       model: databricks/databricks-llama-4-maverick
-      api_key: os.environ/DATABRICKS_API_KEY
       api_base: os.environ/DATABRICKS_API_BASE
 
   # --- Embedding Models ---
   - model_name: databricks-gte-large-en
     litellm_params:
       model: databricks/databricks-gte-large-en
-      api_key: os.environ/DATABRICKS_API_KEY
       api_base: os.environ/DATABRICKS_API_BASE
 
 litellm_settings:
