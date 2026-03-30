@@ -201,20 +201,23 @@ LITELLM_PROXY_KEY=<your-proxy-master-key>
 
 ## 5. Test
 
-### Using stdlib (no dependencies)
+### Using test scripts
 
 ```bash
-python3 test_proxy.py
-```
-
-### Using OpenAI SDK
-
-```bash
-pip install openai python-dotenv
-python test_openai_sdk.py
+source .env && python3 test_proxy.py          # stdlib only, no pip install needed
+source .env && python3 test_openai_sdk.py     # OpenAI SDK + streaming
 ```
 
 ### Using curl
+
+**List models:**
+
+```bash
+curl -s http://<proxy-host>:4000/v1/models \
+  -H "Authorization: Bearer <your-proxy-master-key>" | python3 -m json.tool
+```
+
+**Chat completion:**
 
 ```bash
 curl -s http://<proxy-host>:4000/v1/chat/completions \
@@ -222,17 +225,61 @@ curl -s http://<proxy-host>:4000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
     "model": "databricks-claude-sonnet-4-6",
-    "messages": [{"role": "user", "content": "Hello!"}],
-    "max_tokens": 100
+    "messages": [{"role": "user", "content": "What is 2+2?"}],
+    "max_tokens": 50
+  }' | python3 -m json.tool
+```
+
+**Embedding:**
+
+```bash
+curl -s http://<proxy-host>:4000/v1/embeddings \
+  -H "Authorization: Bearer <your-proxy-master-key>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "databricks-gte-large-en",
+    "input": "Hello world"
+  }' | python3 -m json.tool
+```
+
+**Streaming:**
+
+```bash
+curl -N http://<proxy-host>:4000/v1/chat/completions \
+  -H "Authorization: Bearer <your-proxy-master-key>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "databricks-claude-sonnet-4-6",
+    "messages": [{"role": "user", "content": "Count to 5"}],
+    "stream": true,
+    "max_tokens": 50
   }'
 ```
 
-### Using LiteLLM SDK directly (on the VM)
+### Using Python REPL (OpenAI SDK)
 
-```bash
-ssh azureuser@$PUBLIC_IP "DATABRICKS_API_KEY=<your-pat> \
-  DATABRICKS_API_BASE=https://<workspace>.azuredatabricks.net/serving-endpoints \
-  /opt/litellm-env/bin/python ~/main.py"
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://<proxy-host>:4000/v1",
+    api_key="<your-proxy-master-key>",
+)
+
+# Chat completion
+r = client.chat.completions.create(
+    model="databricks-claude-sonnet-4-6",
+    messages=[{"role": "user", "content": "Hello!"}],
+    max_tokens=50,
+)
+print(r.choices[0].message.content)
+
+# Embedding
+e = client.embeddings.create(
+    model="databricks-gte-large-en",
+    input="Hello world",
+)
+print(f"{len(e.data[0].embedding)} dimensions")
 ```
 
 ---
