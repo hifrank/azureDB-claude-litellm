@@ -1,0 +1,9 @@
+#cloud-config
+package_upgrade: true
+packages:
+  - python3-pip
+  - python3-venv
+runcmd:
+  - python3 -m venv /opt/litellm-env
+  - /opt/litellm-env/bin/pip install litellm python-dotenv
+  - echo "cloud-init done" > /tmp/cloud-init-done
